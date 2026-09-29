@@ -1,0 +1,9 @@
+project.md
+explain.md
+
+# Python generated files
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
