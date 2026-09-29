@@ -1,5 +1,6 @@
 """Core in-memory key-value store for the Mini Redis project."""
 
+import math
 import shlex
 import time
 
@@ -112,7 +113,7 @@ class MiniRedis:
         )
 
     def expire(self, key, seconds):
-        """Set a key's expiry in seconds and return Redis-style 1 or 0."""
+        """Return 1 or 0, or INTEGER_ERROR if the deadline is out of range."""
         self._purge_expired()
         if not self._data.contains(key):
             return 0
@@ -120,8 +121,15 @@ class MiniRedis:
             self._delete_key(key)
             return 1
 
+        # Validate before replacing the existing TTL or adding a heap record.
+        try:
+            expire_at = self._clock() + seconds
+            if not math.isfinite(expire_at):
+                return INTEGER_ERROR
+        except OverflowError:
+            return INTEGER_ERROR
+
         self._expiration_version += 1
-        expire_at = self._clock() + seconds
         expiration = _Expiration(expire_at, self._expiration_version)
         self._expirations.put(key, expiration)
         self._expiration_heap.push((expire_at, expiration.version, key))
@@ -188,7 +196,8 @@ class MiniRedis:
             seconds = self._parse_integer(parts[2])
             if seconds is None:
                 return INTEGER_ERROR
-            return self._integer(self.expire(parts[1], seconds))
+            result = self.expire(parts[1], seconds)
+            return result if result == INTEGER_ERROR else self._integer(result)
 
         if command == "TTL":
             if len(parts) != 2:
@@ -295,4 +304,3 @@ class MiniRedis:
         for index, key in enumerate(keys, start=1):
             lines.append(f"{index}. {self._quote(key)}")
         return "\n".join(lines)
-

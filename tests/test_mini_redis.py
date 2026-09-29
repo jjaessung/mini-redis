@@ -1,4 +1,7 @@
+import subprocess
+import sys
 import unittest
+from pathlib import Path
 
 from mini_redis import INTEGER_ERROR, OOM_ERROR, MiniRedis
 
@@ -132,7 +135,43 @@ class MiniRedisTests(unittest.TestCase):
         self.assertIn("maxmemory:30", info)
         self.assertIn("evicted_keys:0", info)
 
+    def test_out_of_range_expire_preserves_existing_value_and_ttl(self):
+        self.redis.set("key", "value")
+        self.redis.expire("key", 10)
+
+        self.assertEqual(
+            self.redis.execute("EXPIRE key " + "9" * 309), INTEGER_ERROR
+        )
+        self.assertEqual(self.redis.get("key"), "value")
+        self.assertEqual(self.redis.ttl("key"), 10)
+        self.clock.advance(10)
+        self.assertIsNone(self.redis.get("key"))
+        self.assertEqual(self.redis.used_memory, 0)
+
+    def test_infinite_expiration_deadline_is_rejected(self):
+        self.clock.current = 1e308
+        self.redis.set("key", "value")
+
+        self.assertEqual(self.redis.expire("key", 10 ** 308), INTEGER_ERROR)
+        self.assertEqual(self.redis.ttl("key"), -1)
+        self.assertEqual(self.redis.get("key"), "value")
+
+    def test_cli_continues_after_out_of_range_expire(self):
+        main_path = Path(__file__).resolve().parents[1] / "main.py"
+        result = subprocess.run(
+            [sys.executable, "-B", str(main_path)],
+            input="SET key value\nEXPIRE key " + "9" * 309
+            + "\nGET key\nquit\n",
+            text=True,
+            capture_output=True,
+            timeout=10,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, "")
+        self.assertIn(INTEGER_ERROR, result.stdout)
+        self.assertIn('mini-redis> "value"', result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
-
